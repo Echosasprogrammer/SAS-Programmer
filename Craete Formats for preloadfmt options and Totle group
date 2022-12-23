@@ -1,0 +1,154 @@
+***1.Craete Formats for preloadfmt options and Totle group;
+proc format;
+  *Format for FREQ;
+   picture freq (round default=8 )
+      0 <-<99.5 = "009.9)" (prefix="( " )
+      0, 99.5-100 = "(100)  " (noedit) 
+    ;
+
+  value $anrind (notsorted multilabel)
+    "Low" = "Low"
+    "Normal" = "Normal"
+    "High" = "High"
+    "Low", "Normal", "High" = "Total"
+  ;
+
+  *Informat for anrind order;
+  invalue anrindn
+    "Low" = 1
+    "Normal" = 2
+    "High" = 3
+    "Total" = 4
+    ;
+  
+
+  *number for transpose ID var;
+  value $bnrind (notsorted multilabel)
+    "Low" = "1"
+    "Normal" = "2"
+    "High" = "3"
+    "Low", "Normal", "High" = "4"
+  ;
+
+  value trt01an
+    1 = 1
+    2 = 2
+  ;
+
+  value trt01a
+    1 = "Placebo"
+    2 = "Treatment"
+  ;
+
+  value avisitn
+    1 = 1
+    2 = 2
+    3 = 3
+    4 = 4
+  ;
+
+  value avisit
+    1 = "Screening"
+    2 = "Month 1"
+    3 = "Month 2"
+    4 = "Month 3"
+  ;
+run;
+
+
+***2. Get data for analysis;
+
+**2.1 Get data for BigN;
+data class_bign;
+  set class;
+  
+  if avisitn = 1;
+
+  *Flag for cont;
+  flag = 1;
+
+  proc sort nodupkey;
+    by trt01an  name;
+run;
+
+**2.2 Get data for small n;
+data class_n;
+  set class;
+  
+  if avisitn > 1;
+
+  *Flag for cont;
+  flag = 1;
+
+  proc sort;
+    by trt01an avisitn;
+run;
+
+
+***3. Calculate statistics;
+
+**3.1 Derive BigN and save them to macro vars;
+proc means data = class_bign nway completetypes ;
+        format trt01an trt01an.;
+    class trt01an / preloadfmt order = data;
+    var flag;
+
+    output n = bign nmiss = nmiss out = BigN;
+run;
+
+data _null_;
+    set BigN;
+    call symput("N_"||strip(put(trt01an, best.)), strip(put(bign, best.)));
+run;
+
+*Check BigN;
+proc sql noprint;
+    create table BigNcheck as
+        select *
+        from dictionary.macros
+        where name like "N_%";
+quit;
+
+**3.2 Derive statistic vars;
+proc means data = class_n noprint nway completetypes;
+    by trt01an avisitn;
+
+    format anrind $anrind.;
+    class anrind / preloadfmt mlf order = data;
+
+    format bnrind $bnrind.;
+    class bnrind / preloadfmt mlf order = data;
+
+    var flag; 
+
+    output n=count nmiss=nmiss out=count1 ;
+run;
+
+*Get Bign and compute freq;
+data count;
+    merge count1(in = a) bign;
+    by trt01an;
+
+    if a;
+
+    length freq $200;
+    if count = 0 then freq =strip(put(count, best.));
+    else freq =strip(put(count, best.))||put(count/bign*100, freq.);
+
+    *order var for anrind;
+    catn = input(anrind, anrindn.);
+
+    length trt01a avisit $20;
+    trt01a = put(trt01an, trt01a.);
+    avisit = put(avisitn, avisit.);
+
+    proc sort;
+        by  trt01an  avisitn catn anrind; 
+run;
+
+proc transpose data = count out = final(drop = _name_) prefix = trt_;
+    by  trt01an trt01a avisitn avisit catn anrind;
+
+    id bnrind;
+    var freq;
+run;
