@@ -1,0 +1,68 @@
+*SAS日志文件中相关Issue的检查;
+%macro check_log(outdt=, dirpath=);
+**Author: Jihai;
+**Date: 2022-06-01;
+
+%if  "&dirpath." ne "" %then %do;
+
+%local dirpath_tmp slash;
+
+**Get the slash;
+%let slash = %substr(%sysfunc(compress(&dirpath., : _ , a d)), 1, 1);
+
+**Remove trailing slash;
+%if "%substr(&dirpath.,%length(&dirpath.),1)" = "&slash." %then %let dirpath_tmp=%substr(&dirpath.,1,%length(&dirpath.)-1);
+%else %let  dirpath_tmp = &dirpath.;
+
+
+**Get filepath;
+data _tmp1;
+  fileres = filename("dirpath", "&dirpath_tmp.");
+  dirid = dopen("dirpath");
+  num = dnum(dirid);
+
+  length direct filename filepath $200;
+
+  if dirid > 0 and num >0 then do;
+    do i = 1 to num;
+      direct = "&dirpath_tmp.";
+      filename = dread(dirid, i);
+      filepath = catx("&slash.", direct, filename);
+
+      if upcase(scan(filename, -1, ".")) in ("LOG")  then output; 
+    end;
+  end;
+
+  keep filename filepath;
+
+  proc sort;
+    by filename;
+run;
+
+**Output Issue records;
+data &outdt.;
+    set _tmp1;
+    infile dummy  filevar=filepath end=lastrec truncover;
+
+    do while(not lastrec);
+        input text $1000.;
+        if index(text, "ERROR") or  index(text, "WARNING") or  index(text, "_ERROR_") or  index(text, "already on the library") or  index(text, "already sorted") or  index(text, "appears on a DELETE") or  index(text, "At least") or 
+            index(text, "Cartesian product joins") or  index(text, "ERROR DETECTED") or  index(text, "has no effect") or  index(text, "ignored") or  index(text, "will be overwritten") or  index(text, "Invalid") or  index(text, "is not valid") or   index(text, "is invalid") or 
+            index(text, "ivision by zero") or  index(text, "Message") or index(text, "Missing values were gen") or  index(text, "Mathematical") or  index(text, "misspelled") or  index(text, "more than one data set with repeats of BY values") or  index(text, "nreferenced label") or 
+            index(text, "outside the axis range") or  index(text, "pparent") or  index(text, "requires remerging") or  index(text, "roups are not created") or  index(text, "stopped due to looping") or 
+            index(text, "syntax error") or  index(text, "The query as specified involves") or  index(text, "uninitialized") or  index(text, "values have been converted") or  index(text, "went to a new line") or 
+            index(text, "INTERRUPTION")
+                then  output;   
+    end;
+run;
+%end;
+
+%else %put Dirpath is missing ! ;
+
+%mend check_log;
+
+***Invoke the macro;
+%check_log(
+    outdt= check_log
+    ,dirpath= E:\99_Test\Test\test5\
+);
