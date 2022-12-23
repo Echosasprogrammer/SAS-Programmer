@@ -1,0 +1,148 @@
+*Compare宏程序的两种思路;
+data base;
+  set sashelp.class;
+run;
+
+data comp;
+  set sashelp.class;
+
+  if _n_ = 1 then height =100;
+  label weight = "W";
+run;
+
+%macro Compare(base=, comp=, outres=, outdif=);
+
+proc compare base=&base. comp=&comp. out=&outdif outbase outcomp outnoequal outdif;
+run;
+
+**Get compare reslult code;
+%let rc=&sysinfo;
+
+**Get libname and memename of dataset
+
+*Base;
+%if %index(&base., .) %then %do;
+  %let lib_base = %sysfunc(upcase( %scan(&base., 1, .)  ));
+  %let mem_base = %sysfunc(lowcase(%scan(&base., 2, .) ));
+%end;
+%else %do;
+  %let lib_base = WORK;
+  %let mem_base = %sysfunc(lowcase(&base.));  
+%end;
+
+*comp;
+%if %index(&comp., .) %then %do;
+  %let lib_comp = %sysfunc(upcase(%scan(&comp., 1, .) ));
+  %let mem_comp = %sysfunc(lowcase(%scan(&comp., 2, .) ));
+%end;
+%else %do;
+  %let lib_comp = WORK;
+  %let mem_comp = %sysfunc(lowcase(&comp. ));  
+%end;
+
+data _tmp1;
+
+  retain lib_base  mem_base lib_comp mem_comp comp_dtm comp_code comp_res;
+  length lib_base lib_comp $8 mem_base mem_comp $64 com_res $500 c0-c16 $50;
+
+  lib_base = "&lib_base.";
+  lib_comp = "&lib_comp.";
+
+  mem_base = "&mem_base.";
+  mem_comp = "&mem_comp.";
+
+/* 0. No differences */
+ if &rc = 0 then
+      c0 = 'No differences identified';
+/* 1. Test for data set label */
+   if &rc = '1'b then
+      c1 = '01: Data sets have different labels';
+/* 2. Test for data set types */
+   if &rc = '1.'b then
+      c2 = '02: Data set types differ';
+/* 3. Test for variable informats */
+   if &rc = '1..'b then
+      c3 = '03: Variable has different informat';
+/* 4. Test for variable formats */
+   if &rc = '1...'b then
+      c4 = '04: Variable has different format';
+/* 5. Test for length */
+   if &rc = '1....'b then
+      c5 = '05: Variable has different lengths between the base data set 
+      and the comparison data set';
+/* 6. Test for label */
+   if &rc = '1.....'b then
+      c6 = '06: Variable has different label';
+/* 7. Test for base observation */
+if &rc = '1......'b then
+      c7 = '07: Base data set has observation not in comparison data set';
+/* 8. Test for comparison observation */
+   if &rc = '1.......'b then
+      c8 = '08: Comparison data set has observation not in base';
+/* 9. Test for base BY group */
+if &rc = '1........'b then
+      c9 = '09: Base data set has BY group not in comparison';
+/* 10. Test for comparison BY group */
+   if &rc = '1.........'b then
+      c10 = '10: Comparison data set has BY group not in base';
+/* 11. Variable in base data set not in compare data set */
+   if &rc ='1..........'b then 
+      c11 = '11: Variable in base data set not found in comparison data set';
+/* 12. Comparison data set has variable not in base data set */
+   if &rc = '1...........'b then
+      c12 = '12: Comparison data set has variable not contained in the 
+      base data set';
+/* 13. Test for values */
+   if &rc = '1............'b then
+      c13 = '13: A value comparison was unequal';
+/* 14. Conflicting variable types */
+   if &rc ='1.............'b then
+      c14 =   '14: Conflicting variable types between the two data sets 
+      being compared';
+/* 15. Test for BY variables */
+   if &rc = '1..............'b then
+      c15 = '15: BY variables do not match';
+/* 16. Fatal error*/
+   if &rc ='1...............'b then
+      c16 = '16: Fatal error: comparison not done';
+  
+  format comp_dtm e8601dt.;
+  comp_dtm = datetime();
+
+  comp_code = &rc;
+  comp_res = catx("; ", of c0-c16);
+
+  keep lib_base  mem_base lib_comp mem_comp comp_dtm comp_code comp_res;
+run;
+
+**Create compare result dataset;
+%if %sysfunc(exist(&outres.)) %then %do;
+data _tmp2;
+  set &outres. _tmp1;
+run;
+
+**Keep the latest record for one dataset;
+proc sql noprint;
+  create table &outres. as
+    select * 
+    from _tmp2
+    group by lib_base, mem_base
+    having comp_dtm = max(comp_dtm)
+  ;
+quit;
+
+%end;
+%else %do;
+ data &outres.;
+  set _tmp;
+run;
+%end;
+
+%mend;
+
+%compare(
+  base = base
+  ,comp = comp
+  ,outres = comp_res
+  ,outdif = df
+);
