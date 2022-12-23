@@ -1,0 +1,85 @@
+*固定分类顺序的频数汇总表;
+%macro catn(indt=, trtvar=, trtfmt=, catvar=, catfmt=, catnfmt=, section=, outdt=);
+
+**Get small n;
+proc means data = &indt. nway completetype;
+  format &trtvar.  &trtfmt..;
+  class &trtvar./ preloadfmt mlf order = data;
+
+  format &catvar. $&catfmt..;
+  class &catvar./ preloadfmt mlf order = data;
+
+  var flag;
+  output n = count out = count1;
+run;
+
+**Get percentage;
+data count2;
+  merge count1 bign(keep = &trtvar. bign);
+  by &trtvar.;
+
+  section = 1;
+  cat1n = input(&catvar., &catnfmt..);
+
+  length col1 $200;  
+  col1 = &catvar.;
+
+  length freq $200;
+  if bign ne 0 then freq = strip(put(count, best.))||" ("||strip(put(count/bign*100, 8.1))||")";
+  else freq = "0 (-)";
+
+  proc sort;
+    by section cat1n col1 &trtvar.;
+run;
+
+**Transpose results;
+proc transpose data = count2 out = count3 prefix = trt_;
+  by section cat1n col1;
+  var freq;
+  id &trtvar.;
+run;
+
+**Create output dataset;
+data &outdt.;
+  set count3;
+  if cat1n = 0 then call missing(of trt_:);
+  
+  drop _name_;
+run;
+
+%mend catn;
+
+
+proc format;
+  value trt01pn (notsorted multilabel)
+    1 = 1      
+    2 = 2  
+    1,2 = 99
+  ;
+
+  value $sex (notsorted multilabel)
+    "M", "F" = "Sex - n (%)"
+    "M" = "Male"
+    "F" = "Female"
+  ;
+
+  invalue sexn
+    "Sex - n (%)" = 0
+    "Male" = 1
+    "Female" = 2
+  ;
+run;
+
+**Invoke the macro;
+%catn(
+  indt = class0
+  ,trtvar = trt01pn
+  ,trtfmt = trt01pn
+  ,catvar = sex
+  ,catfmt = sex
+  ,catnfmt = sexn
+  ,section = 1
+  ,outdt = sec_1
+);
+
+%mend;
