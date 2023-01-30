@@ -1,0 +1,242 @@
+分母一般是各人群试验组的计数，人群的筛选一般很直接，Title和Footnotes会有详细说明。试验分组的划分中，有可能涉及汇总组（Total）的处理，常规有两种方法，参考文章SAS编程：生成Table时，汇总组(Total)组如何处理？。
+
+0. 分子的3种类别分类
+分子是各类别的计数，相对复杂一点。从类别数目角度看，我将其划分为3类：固定类别，非固定类别，以及固定与非固定类别结合。
+固定类别是指，类别数目在Shell中已经明确定。例如，以下这张AE Summary的表，左侧输出类别是清楚明确的。
+
+
+非固定类别是指，类别数目在Shell中是未知的。例如，AE PT的受试者发生率的表，PT数目暂且未知，根据实际数据集内容确定。
+
+
+
+固定与非固定类别结合是指，既含有固定类别，又含有非固定类别。例如，AE PT与毒性等级的受试者发生率的表，PT数目不确定，毒性等级数目确定。
+
+
+
+
+1、固定类别的处理
+常见的固定类别的table，除了上面举例比较复杂的外，还有比较简单的。例如，人口学的Race的频数汇总。
+
+这里的“复杂”和“简单”如何区分呢？如果分类条件涉及单个变量，我将其称为简单；分类条件涉及多个变量，称为复杂。
+对于固定类别的Table，我建议大家尝试，“简单”地处理——将多变量条件转化为单变量条件处理。
+
+
+对于前面那张AE Sum的table，有19个类别。编程时，有人可能会尝试直接调用19次单行计数的宏程序，然后将19个结果数据集进行拼接。这样可以实现，但编程效率有点低。
+大家可以尝试，新建一个变量（如，catn），其取值对应每一个类别。这样多变量条件就转化成单变量条件，利用一个Means过程步就可以获取到每个类别的计数，简洁高效很多。
+这个方法可以参考之前介绍类似表格的处理，SAS编程-Table：受试者处置中止理由频数汇总。
+这里需要注意的是，对于固定类别的表格（试验分组trt01an也属于固定分类），计数频数为0的情况也需要输出。我习惯使用Means过程步中Class语句的Preloadfmt选项，具体参考链接文章中的程序介绍，计数的主要过程步如下：
+
+
+proc means data = adae nway completetypes;
+  format trt01an trt01an.;
+  class trt01an / preloadfmt mlf order = data;
+format catn catn.;
+  class catn / preloadfmt order = data;
+var flag;
+  output n = count out = count1; 
+run;
+
+额外提一点，受试者发生率是人数除以人数，前期处理分析数据时，需要对受试者进行去重。
+proc sort data = adae1 out = adae nodupkey;
+  by catn usubjid;
+run;
+
+2、非固定类别的处理
+非固定类别与固定类别相比，很大的一点不同是，类别数目的不确定。这里不需要考虑所有可能的输出结果，也就不需要“Preloadfmt”处理。
+这也就自然引出了类别排序的问题，一般有两种排序方式：1）按照某组别频数降序排序；2）按照类别名称进行排序。
+排序一般在footnotes中有明确说明，若没有，需要及时与统计师进行沟通确认。AE相关Table一般都是汇总组频数降序排序。
+处理这一类别的Table，Freq和Means过程步都方便实现。我习惯使用Means过程步，方便试验组别的生成。由于Means过程步分析变量只能处理数值变量，需要新建一个Flag变量以方便计数。
+以上面举例的PT表为例，前期数据处理需要注意两点。第一，首行内容的处理；第二，受试者的去重。
+对于首行，我一般在Data步中通过新增记录进行处理，这样只需对一个数据集进行一次“Means”处理，就可以获取想要的计数。参考代码如下：
+data adae;
+  set adae1;
+	length cat $200;
+  cat1n = 1; cat = "Number of subjects reporting treatment-emergent adverse events"; output;
+  cat1n = 2; cat = aedecod; output;
+  
+  flag = 1;
+proc sort nodupkey;
+    by cat1n cat usubjid;
+run;
+计数时，为确保首行内容排在第一列，分组变量加上cat1n。这里需要注意，不同的cat1n变量对应不同的cat，所以cat1n变量不能用class语句进行分组，否则completetypes选项会带来多余的组合，需使用by语句。读者可以自行调试验证下。
+proc means data = adae nway completetypes;
+  by cat1n;
+format trt01an trt01an.;
+  class trt01an / preloadfmt mlf order = data;
+class cat;
+var flag;
+  output n = count out = count1; 
+run;
+这里也可以不新建cat1n变量，直接在首行内容前加上字符，使其字符排序时，排在前面。最后，在输出结果中进行处理下。例如，添加“00-”：
+cat = "00-Number of subjects reporting treatment-emergent adverse events";
+后序的BigN计算、转置、排序，这里就不详细介绍，可以参考上一小节中的链接文章。
+
+3、固定与非固定类别结合的处理
+第3类是前两者的结合，编程也是结合两者的特点，过程复杂一些。上面举例的Table中，涉及到某一类的AE以及最差等级的信息。这些内容一般在ADAE中进行处理，TFL编程里直接引用变量条件，这里就不再介绍。
+处理频数表内容，我首选是将复杂的变量条件转化为简单的变量条件，考虑排序的需要，会新建排序变量方便排序。
+固定类别内容需要输出频数为0的记录，这一块可以通过Means过程步中的Preloadfmt选项实现。
+首先，需要新建对应的Format。纵向的试验组别的信息也属于固定类别，也是需要建立对应的Format，汇总组的生成可以利用multilabel的选项。（试验分组取值以1、2举例）
+
+***1. Create formats for output;
+proc format;
+  value trt01an (notsorted multilabel)
+    1 = 1
+    2 = 2
+    1, 2 = 99
+  ;
+value catn
+    0 = 0
+    1 = 1
+    2 = 2
+    3 = 3
+    4 = 4
+  ;
+value cat
+    0 = "0"
+    1 = "Grade >= 2"
+    2 = "Grade >= 3"
+    3 = "Grade >= 4"
+    4 = "Fatal"
+  ;
+run;
+第2步获取分析数据集，有2个来源，用于计算BigN的ADSL，以及用于计算小n的ADAE。
+ADSL 数据集选择对应的人群的记录。
+***2. Get data for analysis;
+**2.1 Get data for BigN;
+data  adsl;
+  set adam.adsl;
+  where xxxx and trt01an in (1, 2);
+  
+   *Flag for count;
+    flag = 1;
+run;
+ADAE数据集需要将多变量条件转化为单变量条件，最后需要对每一类计数的受试者ID去重。以这张Table的Shell为例，我会新建catn(0,1,2,3,4,5)变量来代表每一个类别，不同组块的类别使用变量cat1n(1,2,3)变量。不同组块的首行内容展示也有区别，新建变量cat1进行处理。
+**2.2 Get data for small n;
+data adae;
+   merge adam.adae(in = a) adsl(in = b keep = usubjid);
+    by usubjid;
+    if a and b and trtemfl = "Y" ;
+flag = 1;
+length cat1 $200;
+    
+    cat1n = 1; cat1 = "Number of subjects reporting treatment-emergent adverse events"; catn = 0; otuptut;
+if aecat = xxx then do;
+       cat1n = 2; cat1 = "Any xxx Preferred Term";
+        if 1 then do; catn = 0; otuput; end;
+        if aetoxgrn >= 2 then do; catn = 1; output; end;
+        if aetoxgrn >= 3then do; catn = 2; output; end;
+        if aetoxgrn >= 4then do; catn = 3; output; end;
+        if aetoxgrn = 5then do; catn = 4; output; end;
+cat1n = 3; cat1 = strip(aedecod);
+        if 1 then do; catn = 0; otuput; end;
+        if aetoxgrn >= 2 then do; catn = 1; output; end;
+        if aetoxgrn >= 3then do; catn = 2; output; end;
+        if aetoxgrn >= 4then do; catn = 3; output; end;
+        if aetoxgrn = 5then do; catn = 4; output; end;
+     end;
+proc sort nodupkey;    
+        by cat1n cat1 catn usubjid;
+run;
+第3步统计量的计算，也就是大N和小n的计算。大N的值会用于小n百分比的计算以及Header中大N的展示。
+对于固定类别(trt01an, catn)，即便内容在数据集中缺失，也是需要全部展现在表中，所以固定类别在Means过程步Class语句中使用preloadfmt选项；
+对于非固定类别(cat1n)，如果只与其他特定类别有关联(cat1n=1, cat1="Number of XXX"; cat1n=2, cat1="Any XXX"; cat1n=3, cat1=aedecod.)，分析分组使用by语句；
+对于非固定类别(cat1)，如果与其他所有类别(trt01an, catn)都有关联，分析分组使用class语句，completetypes选项会补齐所有可能结果。
+如果采用Format过程步中的multilabel选项来构建汇总组，对应的class语句中需要添加mlf选项。
+***3. Calculate statistics;
+***3.1 Derive BigN and save them to macro vars;
+proc means data = adsl nway completetypes;
+    format trt01an trt01an.;
+    class trt01an / preloadfmt mlf order = data;
+    var flag;
+    output n = bign out = BigN(keep = trt01an bign);
+run;
+data _null_;
+   set BigN;
+  call symputx("N_"||strip(trt01an), strip(put(bign, best.)) );
+run;
+小n的处理，在分析数据集处理好之后，生成过程不复杂。cat1n变量对应不同的cat，所以cat1n变量不能用class语句进行分组，否则completetypes选项会带来多余的组合，使用by语句进行分组。
+**3.2 Calculate small n and percentage;
+*Get small n;
+proc means data = adae nway completetypes;
+  by cat1n;
+format trt01an trt01an.;
+  class trt01an/ preloadfmt mlf order = data;
+class cat1;
+format catn catn.;
+  class catn / preloadfmt order = data;
+var flag;
+  output n = count  out = count1;
+run;
+小n计算完成后，与BigN数据集拼接，计算百分比。完成后，需要排序，方便转置。转置的作用，是将横向放置的Treatment分组信息纵向放置。
+*Get percentage;
+data count2;
+  merge count1 bign;
+  by trt01an;
+  
+  length freq $200;
+  if bign ne 0 then freq = strip(put(count,best.))||" ("||strip(put(count/bign*100, 8.1)) || ")";
+  else freq = "0 (-)";
+proc sort;
+      by cat1n cat1 catn trt01an;
+run;
+进行转置：
+*Transpose results;
+proc transpose data = count2 out = count3 prefix = trt_;
+    by cat1n cat1 catn;
+    var freq;
+    id trt01an;
+run;
+转置完成后，需要需要微调下数据集，包含Col1文本信息的处理、Cat1n = 1的情况中多余的Catn的记录需要删除(catn >= 1, 有Preloadfmt选项生成)，以及需要为每一个Cat组新建一个频数变量以后降序排序（Retain语句）。
+data final1;
+  set count3;
+  
+  by cat1n cat1;
+  length c1-c3 $200;
+  c1 = put(catn, cat.);
+  c2 = trt_1;
+  c3 = trt_2;
+  c4 = trt_99;
+retain cat2n;
+  if first.cat1 then cat2n = input(strip(scan(c3, 1,"(")), best.);
+if c1 = "0" then c1 = cat1;
+  if cat1n = 1 and catn ne 0 then delete;
+proc sort;
+    by cat1n descending cat2n cat1 cat;
+run;
+data final2;
+  set final1;
+  row_num = _n_;
+  keep row_num c1-c4;
+run;
+接下来生成Header数据集，QC的内容要包含大N的信息。
+data header;
+  row_num = 0;
+  length c1 - c4 $200;
+c1 = "Preferred Term Worst Grade";
+  c2 = "TRT A (N = &N_1.) n (%)";
+  c3 = "TRT B (N = &N_2.) n (%)";
+  c4 = "Total (N = &N_99.) n (%)";
+run;
+最后，生成QC数据集。
+**4.2 Create dataset for QC;
+data qc;
+  set header final2;
+run;
+4. 其他
+频数汇总表涉及到的内容，基本不出这3类情况。之前介绍的AE SOCPT的嵌套表格，是第二类非固定类别的处理；介绍的Shift表格，是第一类固定类别的处理；关于第三类固定与非固定结合，之前也有SOC、PT、Severity3层嵌套表格的介绍。
+
+来自 <https://zhuanlan.zhihu.com/p/571744823> 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
