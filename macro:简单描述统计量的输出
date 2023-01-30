@@ -1,0 +1,397 @@
+在临床试验TFL编程中，简单的描述性统计量与频数汇总表格的数量占表格总量的绝对大头。从提高编程效率的角度看，为这两类表格建立稳定的宏程序输出是一件非常高效率的事情。
+这篇文章介绍，数值变量的简单描述性统计量输出的一些考虑，主要有4方面的内容：
+1. 试验汇总组的处理
+2. 横向数据转换为纵向数据
+3. 文字说明行的处理
+4. 小数位数的处理
+完整宏程序代码在文章的第5节，如果读者想要引用宏程序的话，可能需要根据自己项目要求更新统计量的布局和小数位保留的设置。
+简单描述性统计量输出的样式，各家公司大同小异，这篇文章采用以下样式：
+
+
+计算统计量的过程步选择Proc Means, 使用其他过程步也可以。
+分析数据来源于SASHELP.CLASS数据集，简单处理下，新建一个分组变量：
+data class0;
+  set sashelp.class;
+  if _n_ < 10 then trt01pn = 1;
+  else trt01pn = 2;
+run;
+1. 试验汇总组的处理
+TFLShell中会明说明输出Table是否有汇总组。最常见的处理汇总组的方式是，在原始数据集利用Data步的Output语句，新建汇总组；我推荐大家尝试使用Format过程步中的Multilabel选项进行构建汇总组，这个方法不需要在原始数据集中进行新建分组处理，一定程度减少了分析数据集的观测数。
+具体介绍文章参考：SAS编程：生成Table时，汇总组(Total)组如何处理？。
+
+示例代码如下:
+proc format;
+  value trt01pn (notsorted multilabel)
+    1 = 1      
+    2 = 2  
+    1,2 = 99
+  ;
+run;
+proc means data = class0 nway completetypes;
+  format trt01pn trt01pn.;
+  class trt01pn / preloadfmt mlf order = data;
+  var height;
+  output n=n_ mean=mean_ std=sd_  median=median_ q1=q1_ q3=q3_ min=min_ max=max_ out=stat1;
+run;
+结果如下:
+
+
+结果中汇总组(trt01pn = 99)的相关统计量也被输出来。这里Means过程步中使用的选项nway、preloadfmt、mlf都不能被省略，关于各个选项作用，读者可以参考SAS官方文档，这里就不再赘述。
+
+
+2. 横向数据转换为纵向数据
+输出统计量数值之后，需要再根据Shell中具体的Layout进行处理。对于试验分组受试者频数为0的情形，shell中可能有特别的显示，代码示例如下：
+data stat2;
+  set stat1;
+  length n mean sd median q1q3 minmax $200;
+if n_ ne 0 then do;
+     n = strip(put(n_, 8.0));
+     mean = strip(put(mean_, 8.1));
+     sd = strip(put(sd_, 8.1));
+     median = strip(put(median_, 8.1));
+     q1q3 = strip(put(q1_, 8.1))||", "||strip(put(q3_, 8.1));
+     minmax = strip(put(min_, 8.1))||", "||strip(put(max_, 8.1));    
+  end;
+  else do;
+     n = strip(put(n_, 8.0));
+     mean = "-";
+     sd = "-";
+     median = "-";
+     q1q3 = "-, -";
+     minmax = "-, -";  
+  end;
+run; 
+结果如下:
+
+
+
+数据整理完毕后，需要将横向数据转换为纵向数据，常用的方法有2种：
+1. Data步中Output语句；
+2. Transpose过程步
+从代码和输出数据集的简洁角度考虑，使用Transpose过程步要好一些：
+proc transpose data = stat2 out = stat3 prefix = trt_;
+  var n mean sd median q1q3 minmax;
+  id trt01pn;
+run;
+结果如下：
+
+
+Shell中的内容已大体具备，首列的内容通常以_NAME_取值的Format进行展示。同时，为了后续排序方便，也会新建排序变量。考虑到，宏程序批量处理内容比较多，新建Section变量，方便标识输出结果的不同部分。统计量的排序变量，以_NAME_取值的Informat进行展示。
+
+proc format;
+  value $stat
+    "n" = "n"
+    "mean" = "Mean"
+    "sd" = "SD"
+    "median" = "Median"
+    "q1q3" = "Q1, Q3"
+    "minmax" = "Min, Max"
+  ;
+invalue statn
+    "n" = 1
+    "mean" = 2
+    "sd" = 3
+    "median" = 4
+    "q1q3" = 5
+    "minmax" = 6
+  ;
+run;
+data stat4;
+  retain section cat1n col1 trt_:;
+  set stat3;
+section = 1;
+  cat1n = input(_name_, statn.);
+length col1 $200;
+  col1 = put(_name_, stat.);
+keep section cat1n col1 trt_:;
+run;
+
+来自 <https://zhuanlan.zhihu.com/p/570145691> 
+
+
+3. 文字说明行的处理
+统计量首行展示的文字说明行，通常有2种做法。
+第1种，新建一个包含文字说明信息的数据集与主体数据集进行纵向拼接；第2种，在主体数据集中使用Output语句，多生成一行记录用于放置文字说明信息。
+这里提供第3种方法，在横向数据转换成纵向数据之前，数据集保留一个空变量。同时，也对这个空变量进行转置，这样输出数据集就会有多出一行。这一行就用于放置文字说明信息，informat中的排序变量值也需要进行相应的设置，其对应的说明信息直接在Data步中进行赋值，程序如下：(Stat2数据集中多了textline变量)
+data stat2;
+  set stat1;
+  length textline n mean sd median q1q3 minmax $200;
+if n_ ne 0 then do;
+    textline = "";
+     n = strip(put(n_, 8.0));
+     mean = strip(put(mean_, 8.1));
+     sd = strip(put(sd_, 8.1));
+     median = strip(put(median_, 8.1));
+     q1q3 = strip(put(q1_, 8.1))||", "||strip(put(q3_, 8.1));
+     minmax = strip(put(min_, 8.1))||", "||strip(put(max_, 8.1));    
+  end;
+  else do;
+    textline = "";
+     n = strip(put(n_, 8.0));
+     mean = "-";
+     sd = "-";
+     median = "-";
+     q1q3 = "-, -";
+     minmax = "-, -";  
+  end;
+run;
+proc transpose data = stat2 out = stat3 prefix = trt_;
+  var textline n mean sd median q1q3 minmax;
+  id trt01pn;
+run;
+proc format;
+  value $stat
+    "n" = "n"
+    "mean" = "Mean"
+    "sd" = "SD"
+    "median" = "Median"
+    "q1q3" = "Q1, Q3"
+    "minmax" = "Min, Max"
+  ;
+invalue statn
+    "textline" = 0
+    "n" = 1
+    "mean" = 2
+    "sd" = 3
+    "median" = 4
+    "q1q3" = 5
+    "minmax" = 6
+  ;
+run;
+data stat4;
+  retain section cat1n col1 trt_:;
+  set stat3;
+section = 1;
+  cat1n = input(_name_, statn.);
+length col1 $200;
+  if _name_ ne "textline" then col1 = put(_name_, stat.);
+  else col1 = "Height (cm)";
+keep section cat1n col1 trt_:;
+run;
+这样，简单描述性统计量就输出完毕：
+
+
+4. 小数位数的处理
+4.1 统计量小数位数宏变量的生成
+关于各统计量的小数位数，不同的公司、不同的统计师可能有不同的要求。在确定小数位数要求后，常规做法，是将原始小数位数作为宏变量，代入Data步中的Format。
+不过，上述操作的代码会显得杂乱。我们可以在Data步之外提前设置好各统计量Format的宏变量，后续直接引用宏变量。
+%macro deci(dp=);
+  %let d_n    = 8.0; %put d_n = &d_n.;
+  %let d_mean = 8.%eval(&dp.+1); %put d_mean = &d_mean.;
+  %let d_sd   = 8.%eval(&dp.+1); %put d_sd = &d_sd.;
+  %let d_medi = 8.%eval(&dp.+1); %put d_median  = &d_medi.;
+  %let d_qq   = 8.%eval(&dp.+1); %put d_qq = &d_qq.;
+  %let d_mm   = 8.%eval(&dp.+0); %put d_mm = &d_mm.;
+%mend;
+%deci(dp = 0);
+运行输出后，日志显示如下：
+
+通常小数位数的展示不超过4位，输出时需要对小数位数进行限制，当小数位数超过4时，小数位数取4：
+%macro deci(dp=);
+  %global d_n    d_mean d_sd   d_medi d_qq   d_mm  ;
+  %let d_n    = 8.0; %put d_n = &d_n.;
+  %let d_mean = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_mean = &d_mean.;
+  %let d_sd   = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_sd = &d_sd.;
+  %let d_medi = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_medi  = &d_medi.;
+  %let d_qq   = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_qq = &d_qq.;
+  %let d_mm   = 8.%sysfunc(min( %eval(&dp.+0), 4 )); %put d_mm = &d_mm.;
+%mend;
+%deci(dp = 5);
+
+以上程序运行输出如下：
+
+
+4.2 “-0”问题的处理
+在之前的文章中介绍过，保留小数位数，常用的方法是直接put具体的数字格式。不过，这种处理方式在负数十分位向0进位时，可能会产生一些偏误。
+我用代码进行实例，对数字0.4, 0.5, -0.4, -0.49 -0.5四舍五入保留整数。使用两种方法，一种是直接put数值格式8.0；一种是使用函数Round处理之后，再put数值格式8.0。
+
+
+data tmp;
+    input a @@;
+bput = strip(put(a, 8.0));
+    bround = strip(put(round(a, 1), 8.0));
+    
+    datalines;
+        0.4
+        0.5
+        -0.4
+        -0.49
+        -0.5
+    ;
+run;
+
+
+从结果中可以看到，对于-0.4和-0.49这2个数值，四舍五入应该进位成0，但是直接Put时，结果是-0，与想要的结果不同。更一般的，对于(-0.5, 0)这个范围的数值，put函数保留整数时，结果为-0。
+我没细究这个现象的原因，建议读者在保留小数位数时，先使用Round函数，再put相应的格式。t同时，两个函数保留的小数位数要相同，否则会产生二次误差。
+结合上面的描述，还需设置round函数精度，方便调用，代码如下：
+
+
+%macro deci(dp=);
+%global d_n d_mean d_sd d_medi d_qq d_mm r_n r_mean r_sd r_medi r_qq r_mm;
+%let d_n    = 8.0; %put d_n = &d_n.;
+  %let d_mean = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_mean = &d_mean.;
+  %let d_sd   = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_sd = &d_sd.;
+  %let d_medi = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_medi  = &d_medi.;
+  %let d_qq   = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_qq = &d_qq.;
+  %let d_mm   = 8.%sysfunc(min( %eval(&dp.+0), 4 )); %put d_mm = &d_mm.;
+%let r_n = 1; %put r_n = &r_n.;
+  %let r_mean = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_mean = &r_mean.;
+  %let r_sd   = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_sd = &r_sd.;
+  %let r_medi = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_medi = &r_medi.;
+  %let r_qq   = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_qq = &r_qq.;
+  %let r_mm   = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+0), 4 )) )); %put r_mm  = &r_mm.;
+%mend;
+%deci(dp = 5);
+
+
+
+Data步中，对应的更新如下：
+%deci(dp =1);
+data stat2;
+  set stat1;
+  length textline n mean sd median q1q3 minmax $200;
+if n_ ne 0 then do;
+    textline = "";
+     n = strip(put(round(n_, &r_n.), &d_n.));
+     mean = strip(put(round(mean_, &r_mean.), &d_mean.));
+     sd = strip(put(round(sd_, &r_sd.), &d_sd.));
+     median = strip(put(round(median_, &r_medi.), &d_medi.));
+     q1q3 = strip(put(round(q1_, &r_qq.), &d_qq.))||", "||strip(put(round(q3_, &r_qq.), &d_qq.));
+     minmax = strip(put(round(min_, &r_mm.), &d_mm.))||", "||strip(put(round(max_, &r_mm.), &d_mm.));    
+  end;
+  else do;
+    textlin = "";
+     n = strip(put(n_, 8.0));
+     mean = "-";
+     sd = "-";
+     median = "-";
+     q1q3 = "-, -";
+     minmax = "-, -";  
+  end;
+run;
+
+结果如下:
+
+
+
+输出结果已经按照设置的小数位数展示，这样每次只需要更新宏参数dp就可以更新所有统计量的小数位。
+至于小数位数的确认，取决于统计师或公司的要求。如果是从实际数据中获取，还需要额外的获取处理，这里就不进一步展开。
+
+5. 宏程序汇总
+宏程序需要使用统计量的Format（$stat.）进行第一列展示，也需要Informat（statn.）生成排序变量。考虑到，如果这些格式生成放在宏程序中，每次调用宏都会新生成一次。所以，我将这些程序放到宏程序之外。
+***1. Macro for decimal places;
+%macro deci(dp=);
+%global d_n d_mean d_sd d_medi d_qq d_mm r_n r_mean r_sd r_medi r_qq r_mm;
+%let d_n    = 8.0; %put d_n = &d_n.;
+  %let d_mean = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_mean = &d_mean.;
+  %let d_sd   = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_sd = &d_sd.;
+  %let d_medi = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_medi  = &d_medi.;
+  %let d_qq   = 8.%sysfunc(min( %eval(&dp.+1), 4 )); %put d_qq = &d_qq.;
+  %let d_mm   = 8.%sysfunc(min( %eval(&dp.+0), 4 )); %put d_mm = &d_mm.;
+%let r_n = 1; %put r_n = &r_n.;
+  %let r_mean = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_mean = &r_mean.;
+  %let r_sd   = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_sd = &r_sd.;
+  %let r_medi = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_medi = &r_medi.;
+  %let r_qq   = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+1), 4 )) )); %put r_qq = &r_qq.;
+  %let r_mm   = %sysevalf(0.1**(%sysfunc(min( %eval(&dp.+0), 4 )) )); %put r_mm  = &r_mm.;
+%mend;
+***2. Macro for Statistics;
+%macro stat(indt=, trtvar=, trtfmt=, anlvar=, dp=, textline=, section=, outdt=);
+**2.1 Get statistics;
+proc means data = &indt. nway completetypes;
+  format &trtvar. &trtfmt..;
+  class trt01pn / preloadfmt mlf order = data;
+  var &anlvar.;
+  output n=n_ mean=mean_ std=sd_  median=median_ q1=q1_ q3=q3_ min=min_ max=max_ out=stat1;
+run;
+**2.2 Get decimal places for statistic;
+%deci(dp = &dp.);
+**2.3 Table display;
+data stat2;
+  set stat1;
+  length textline n mean sd median q1q3 minmax $200;
+if n_ ne 0 then do;
+    textline = "";
+     n = strip(put(round(n_, &r_n.), &d_n.));
+     mean = strip(put(round(mean_, &r_mean.), &d_mean.));
+     sd = strip(put(round(sd_, &r_sd.), &d_sd.));
+     median = strip(put(round(median_, &r_medi.), &d_medi.));
+     q1q3 = strip(put(round(q1_, &r_qq.), &d_qq.))||", "||strip(put(round(q3_, &r_qq.), &d_qq.));
+     minmax = strip(put(round(min_, &r_mm.), &d_mm.))||", "||strip(put(round(max_, &r_mm.), &d_mm.));    
+  end;
+  else do;
+    textlin = "";
+     n = strip(put(n_, 8.0));
+     mean = "-";
+     sd = "-";
+     median = "-";
+     q1q3 = "-, -";
+     minmax = "-, -";  
+  end;
+run;
+**2.4 Transpose results;
+proc transpose data = stat2 out = stat3 prefix = trt_;
+  var textline n mean sd median q1q3 minmax;
+  id &trtvar.;
+run;
+**2.5 Create output dataset;
+data &outdt.;
+  retain section cat1n col1 trt_:;
+  set stat3;
+section = &section.;
+  cat1n = input(_name_, statn.);
+length col1 $200;
+  if _name_ ne "textline" then col1 = put(_name_, stat.);
+  else col1 = "&textline.";
+keep section cat1n col1 trt_:;
+run;
+%mend stat;
+***3. Invoke the macro;
+proc format;
+  value trt01pn (notsorted multilabel)
+    1 = 1      
+    2 = 2  
+    1,2 = 99
+  ;
+value $stat
+    "n" = "n"
+    "mean" = "Mean"
+    "sd" = "SD"
+    "median" = "Median"
+    "q1q3" = "Q1, Q3"
+    "minmax" = "Min, Max"
+  ;
+invalue statn
+    "textline" = 0
+    "n" = 1
+    "mean" = 2
+    "sd" = 3
+    "median" = 4
+    "q1q3" = 5
+    "minmax" = 6
+  ;
+run;
+%stat(
+  indt = class0
+  ,trtvar = trt01pn
+  ,trtfmt = trt01pn
+  ,anlvar = height
+  ,dp = 1
+  ,textline = Heigth (cm)
+  ,section = 1
+  ,outdt = sec_1
+);
+结果如下:
+
+
+当然，对于多个分组变量的亚组分析，每个亚组也可以看成是重复单一的内容。但是，这样简单机械的处理抹去了，各亚组之间的联系。这就像数学的几何题一样，我们可以通过复杂推理得到正确结果，不过，有时候一条辅助线可以让整个解题过程简洁的多得多。
+这里举个LB简单描述统计量输出的例子，LB中可能有二三十个Parameter，如果单独依次出每个Paramter对应的内容，那过程就太过繁琐；如果在宏程序中添加多个分组变量，一次调用就能解决，那跟手动写出完整输出过程又没什么区别。
+proc means data = adlb noprint nway completetypes;
+  by trt01an parcat1n paramn paramcd avisitn;
+  format anrindn anrindn.;
+  class anrindn / preloadfmt order = data;
+var aval ;
+output n = n_ mean=mean_ median=median_ q1=q1_ q3=q3_ min=min_ max=max_ out = stat1;
+run;
+
+
