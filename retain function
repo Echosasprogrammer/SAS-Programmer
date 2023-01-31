@@ -1,0 +1,23 @@
+retain常见用法有俩种，一种调整变量顺序，一种作为观测与观测之间变量值的传递。
+method1: 调整变量顺序，将retain语句放在set语句之前
+data class;
+  retain sex name;
+  set sashelp.class;
+run;
+
+method 2:传递观测值
+proc sort data=sashelp.class  out=class  sortseq=linguistic(numeric_collation=on);by  sex ;quit;
+data class1;
+  set class;
+  retain  age_sum sum_tt;
+  by sex;
+  if first.sex then do;
+  age_sum=age;
+  sum_tt=cats(age);
+  end;
+  else do;
+  age_sum+age;
+  sum_tt=catx('+',sum_tt,age);
+  end;
+  symbol=catx('=',age_sum,sum_tt);
+run;
