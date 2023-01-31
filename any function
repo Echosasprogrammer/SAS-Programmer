@@ -1,0 +1,19 @@
+data anywhere;
+input String $char20.;
+Alpha_num = anyalnum(String);/*查找字符串 从左至右  第一个出现 数值或字母（不分大小写）的位置*/
+Alpha_num_9 = anyalnum(String,-999);/*查找字符串 前999个字符长度，从右至左  第一个出现 数值或字母（不分大小写）的位置*/
+Alpha = anyalpha(String);/*查找字符串 从左至右  第一个出现 字母（不分大小写）的位置*/
+Alpha_5 = anyalpha(String,-5);/*查找字符串 前5个字符长度，从右至左  第一个出现 字母（不分大小写）的位置*/
+Digit = anydigit(String);/*查找字符串 从左至右  第一个出现 数值的位置*/
+Digit_9 = anydigit(String,-999);/*查找字符串 前999个字符长度，从右至左  第一个出现 数值的位置*/
+Punct = anypunct(String);/*特殊符号*/
+Space = anyspace(String);/*查找字符串 从左至右  第一个出现 空格 的位置*/
+Up = anyupper(String);/*查找字符串 从左至右  第一个出现 字母（大写）的位置*/
+Low = anylower(String);/*查找字符串 从左至右  第一个出现 字母（小写）的位置*/
+datalines;
+Once upon a time 123
+HELP!
+987654321
+UPPER and lower
+;
+run;
